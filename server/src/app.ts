@@ -1,0 +1,62 @@
+import cors from 'cors';
+import express from 'express';
+import helmet from 'helmet';
+import { config } from './config.js';
+import { optionalAuth } from './lib/auth.js';
+import { errorHandler, notFound } from './lib/errors.js';
+import { adminRouter } from './modules/admin/routes.js';
+import { authRouter } from './modules/auth/routes.js';
+import { bedRequestsRouter } from './modules/bedRequests/routes.js';
+import { catalogueRouter } from './modules/catalogue/routes.js';
+import { facilitiesRouter } from './modules/facilities/routes.js';
+import { feedbackRouter } from './modules/feedback/routes.js';
+import { inventoryRouter } from './modules/inventory/routes.js';
+import { notificationsRouter } from './modules/notifications/routes.js';
+import { facilityOrdersRouter, ordersRouter } from './modules/orders/routes.js';
+import { paymentsRouter } from './modules/payments/routes.js';
+import { resourcesRouter } from './modules/resources/routes.js';
+import { geoRouter, searchRouter } from './modules/search/routes.js';
+import { specialistsRouter } from './modules/specialists/routes.js';
+import { documentsRouter, payoutsRouter } from './modules/documents/routes.js';
+import { hospitalRouter, staffRouter } from './modules/hospital/routes.js';
+import { patientRouter } from './modules/patient/routes.js';
+import { registrationRouter } from './modules/registration/routes.js';
+import { reportsRouter } from './modules/reports/routes.js';
+
+export function createApp() {
+  const app = express();
+  app.set('trust proxy', 1);
+  app.use(helmet());
+  app.use(cors({ origin: config.webUrl }));
+  const json = express.json({ limit: '1mb' });
+  // The payment webhook verifies a signature over the raw body, so it skips JSON parsing.
+  app.use((req, res, next) => (req.path === '/api/payments/webhook' ? next() : json(req, res, next)));
+  app.use(optionalAuth);
+
+  app.get('/api/health', (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+  app.use('/api/auth', authRouter);
+  app.use('/api/search', searchRouter);
+  app.use('/api/geo', geoRouter);
+  app.use('/api/catalogue', catalogueRouter);
+  app.use('/api/facilities', facilitiesRouter);
+  app.use('/api/inventory', inventoryRouter);
+  app.use('/api/resources', resourcesRouter);
+  app.use('/api/specialists', specialistsRouter);
+  app.use('/api/orders', ordersRouter);
+  app.use('/api/facility-orders', facilityOrdersRouter);
+  app.use('/api/payments', paymentsRouter);
+  app.use('/api/bed-requests', bedRequestsRouter);
+  app.use('/api/notifications', notificationsRouter);
+  app.use('/api/feedback', feedbackRouter);
+  app.use('/api/admin', adminRouter);
+  app.use('/api/register', registrationRouter);
+  app.use('/api/documents', documentsRouter);
+  app.use('/api/payouts', payoutsRouter);
+  app.use('/api/me', patientRouter);
+  app.use('/api/hospital', hospitalRouter);
+  app.use('/api/staff', staffRouter);
+  app.use('/api/reports', reportsRouter);
+  app.use('/api', (_req, _res, next) => next(notFound('No such endpoint')));
+  app.use(errorHandler);
+  return app;
+}

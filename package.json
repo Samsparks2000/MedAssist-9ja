@@ -1,0 +1,16 @@
+{
+  "name": "medassist-9ja",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Find the nearest verified hospital, pharmacy or specialist that has what you need, now.",
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w server\" \"npm run dev -w web\"",
+    "test": "npm test -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "build": "npm run build -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}

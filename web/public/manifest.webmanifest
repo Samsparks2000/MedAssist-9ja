@@ -1,0 +1,12 @@
+{
+  "name": "MedAssist-9ja",
+  "short_name": "MedAssist",
+  "description": "Find the nearest verified hospital, pharmacy or specialist that has what you need, now.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
