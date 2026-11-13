@@ -7,7 +7,7 @@ import { normalisePhone } from '../../lib/codes.js';
 import { conflict, forbidden, notFound, parse } from '../../lib/errors.js';
 import { config } from '../../config.js';
 import { collectDeadline, DAY_KEYS, hoursStatus, isOpenNow, localNow } from '../../lib/time.js';
-import { type FacilityRow, findOwnFacility, ownFacility, publicFacility, publishChange, touchFacility } from './service.js';
+import { type FacilityRow, findOwnFacility, managedFacility, ownFacility, publicFacility, publishChange, touchFacility } from './service.js';
 
 export const facilitiesRouter = Router();
 
@@ -67,7 +67,7 @@ facilitiesRouter.get('/mine', requireAuth('pharmacy', 'hospital'), async (req, r
 });
 
 facilitiesRouter.patch('/mine', requireAuth('pharmacy', 'hospital'), async (req, res) => {
-  const current = await ownFacility(req.user!);
+  const current = await managedFacility(req.user!);
   const body = parse(facilityInput.partial(), req.body);
   // Changing the licence number sends the facility back through verification (US-30).
   const licenceChanged = body.licenceNo !== undefined && body.licenceNo !== current.licence_no;
@@ -137,6 +137,7 @@ facilitiesRouter.get('/:id', async (req, res) => {
             max(i.price) AS last_price, max(i.updated_at) AS updated_at, max(i.reorder_level) AS reorder_level,
             (array_agg(i.batch_no ORDER BY i.expiry_date) FILTER (WHERE i.expiry_date > current_date AND i.quantity > i.reserved))[1] AS batch_no,
             min(i.expiry_date) FILTER (WHERE i.expiry_date > current_date AND i.quantity > i.reserved) AS expiry_date,
+            max(i.nafdac_no) AS nafdac_no,
             bool_or(i.needs_prescription) AS needs_prescription, bool_or(i.refrigerated) AS refrigerated,
             bool_and(i.allow_reservations) AS allow_reservations
        FROM inventory_items i JOIN drug_catalogue d ON d.id = i.drug_id

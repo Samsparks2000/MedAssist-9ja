@@ -6,9 +6,9 @@ import { audit } from '../../lib/audit.js';
 import { requireAuth } from '../../lib/auth.js';
 import { badRequest, conflict, notFound, parse } from '../../lib/errors.js';
 import { ownFacility, publishChange, touchFacility } from '../facilities/service.js';
-import { type Db } from '../../db/pool.js';
+import { type Db, db } from '../../db/pool.js';
 import { haversineSql } from '../../lib/geo.js';
-import { allocateFefo, checkLowStock, notifyBackInStock } from './service.js';
+import { allocateFefo, checkLowStock, cleanNafdac, isValidNafdac, NAFDAC_HINT, nafdacOnFile, notifyBackInStock, syncNafdac } from './service.js';
 import { parseStockSheet, TEMPLATE_CSV } from './upload.js';
 
 export const inventoryRouter = Router();
@@ -21,6 +21,14 @@ const upload = multer({
 });
 
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+/** Optional on input when the facility already recorded one for the drug; checked for shape when given. */
+const nafdacStr = z
+  .string()
+  .max(40)
+  .nullish()
+  .transform((v) => cleanNafdac(v))
+  .refine((v) => v === null || isValidNafdac(v), NAFDAC_HINT);
+const NAFDAC_MISSING = 'Enter the NAFDAC registration number printed on the pack (for example A4-1234)';
 
 inventoryRouter.get('/', async (req, res) => {
   const f = await ownFacility(req.user!);
@@ -75,6 +83,7 @@ const itemInput = z.object({
   needsPrescription: z.boolean().optional(),
   refrigerated: z.boolean().optional(),
   allowReservations: z.boolean().default(true),
+  nafdacNo: nafdacStr,
 });
 
 /** Flags default to what this facility already set for the drug, so a re-delivery keeps them. */
@@ -93,6 +102,8 @@ inventoryRouter.post('/', async (req, res) => {
   if (body.expiryDate <= new Date().toISOString().slice(0, 10)) throw badRequest('Expired stock cannot be added');
   const item = await tx(async (c) => {
     const d = await flagDefaults(c, f.id, body.drugId);
+    const nafdacNo = body.nafdacNo ?? (await nafdacOnFile(c, f.id, [body.drugId])).get(body.drugId);
+    if (!nafdacNo) throw badRequest(NAFDAC_MISSING);
     // A delivery of an existing batch adds to it rather than failing.
     const row = await one(
       `INSERT INTO inventory_items (facility_id, drug_id, quantity, price, cost_price, batch_no, expiry_date, reorder_level,
@@ -116,6 +127,8 @@ inventoryRouter.post('/', async (req, res) => {
       [f.id, body.drugId, row.needs_prescription, row.refrigerated, row.allow_reservations],
       c,
     );
+    await syncNafdac(c, f.id, body.drugId, nafdacNo);
+    row.nafdac_no = nafdacNo;
     await touchFacility(c, f.id);
     await audit(c, req.user!.id, 'stock.add', 'inventory_item', row.id, body);
     await checkLowStock(c, f.id, [body.drugId]);
@@ -142,7 +155,8 @@ inventoryRouter.get('/demand/:drugId', async (req, res) => {
        FROM inventory_items WHERE facility_id = $1 AND drug_id = $2`,
     [f.id, req.params.drugId],
   );
-  res.json({ searches: row?.searches ?? 0, available: stock?.available ?? 0, listed: (stock?.batches ?? 0) > 0 });
+  const nafdacNo = (await nafdacOnFile(db(), f.id, [req.params.drugId as string])).get(req.params.drugId as string) ?? null;
+  res.json({ searches: row?.searches ?? 0, available: stock?.available ?? 0, listed: (stock?.batches ?? 0) > 0, nafdacNo });
 });
 
 /** Imports rows corrected on the dashboard after an upload check (US-16). */
@@ -151,7 +165,7 @@ inventoryRouter.post('/import', async (req, res) => {
   const { rows } = parse(
     z.object({
       rows: z
-        .array(itemInput.pick({ drugId: true, quantity: true, price: true, batchNo: true, expiryDate: true, reorderLevel: true }))
+        .array(itemInput.pick({ drugId: true, quantity: true, price: true, batchNo: true, expiryDate: true, reorderLevel: true, nafdacNo: true }))
         .min(1)
         .max(2000),
     }),
@@ -162,7 +176,11 @@ inventoryRouter.post('/import', async (req, res) => {
   let created = 0;
   let updated = 0;
   await tx(async (c) => {
+    const onFile = await nafdacOnFile(c, f.id, [...new Set(rows.map((r) => r.drugId))]);
     for (const r of rows) {
+      const nafdacNo = r.nafdacNo ?? onFile.get(r.drugId);
+      if (!nafdacNo) throw badRequest(`${NAFDAC_MISSING}. Batch ${r.batchNo} has none.`);
+      onFile.set(r.drugId, nafdacNo);
       const d = await flagDefaults(c, f.id, r.drugId);
       const existed = await one('SELECT 1 FROM inventory_items WHERE facility_id = $1 AND drug_id = $2 AND batch_no = $3', [f.id, r.drugId, r.batchNo], c);
       await query(
@@ -174,6 +192,7 @@ inventoryRouter.post('/import', async (req, res) => {
         [f.id, r.drugId, r.quantity, r.price, r.batchNo, r.expiryDate, r.reorderLevel, d.rx, d.cold],
         c,
       );
+      await syncNafdac(c, f.id, r.drugId, nafdacNo);
       if (existed) updated++;
       else created++;
     }
@@ -199,6 +218,7 @@ inventoryRouter.patch('/:id', async (req, res) => {
       needsPrescription: z.boolean().optional(),
       refrigerated: z.boolean().optional(),
       allowReservations: z.boolean().optional(),
+      nafdacNo: nafdacStr.optional(),
       reason: z.string().max(120).optional(),
     }),
     req.body,
@@ -225,11 +245,16 @@ inventoryRouter.patch('/:id', async (req, res) => {
         c,
       );
     }
+    if (body.nafdacNo) {
+      await syncNafdac(c, f.id, before.drug_id, body.nafdacNo);
+      row.nafdac_no = body.nafdacNo;
+    }
     await notifyBackInStock(c, f.id, [before.drug_id]);
     await touchFacility(c, f.id);
     await audit(c, req.user!.id, 'stock.adjust', 'inventory_item', before.id, {
       from: { quantity: before.quantity, price: before.price },
       to: { quantity: row.quantity, price: row.price },
+      nafdacNo: body.nafdacNo ?? undefined,
       reason: body.reason,
     });
     await checkLowStock(c, f.id, [before.drug_id]);
@@ -264,7 +289,22 @@ inventoryRouter.post('/upload', upload.single('file'), async (req, res) => {
   const f = await ownFacility(req.user!);
   if (!req.file) throw badRequest('Attach a .csv or .xlsx file');
   const dryRun = req.query.dryRun === 'true';
-  const { rows, errors } = await parseStockSheet(req.file.buffer, req.file.originalname);
+  const parsed = await parseStockSheet(req.file.buffer, req.file.originalname);
+  const { errors } = parsed;
+  // Rows without a NAFDAC number are fine when one is already on file for the drug (FR-07).
+  const onFile = await nafdacOnFile(db(), f.id, [...new Set(parsed.rows.map((r) => r.drugId))]);
+  const rows = parsed.rows.filter((r) => {
+    r.nafdacNo ??= onFile.get(r.drugId) ?? parsed.rows.find((o) => o.drugId === r.drugId && o.nafdacNo)?.nafdacNo ?? null;
+    if (r.nafdacNo) return true;
+    errors.push({
+      row: r.row,
+      message: 'NAFDAC number is missing',
+      kind: 'nafdac',
+      raw: `${r.drugLabel} · batch ${r.batchNo}`,
+      fields: { drugId: r.drugId, quantity: r.quantity, price: r.price, batchNo: r.batchNo, expiryDate: r.expiryDate, reorderLevel: r.reorderLevel, nafdacNo: null },
+    });
+    return false;
+  });
 
   let created = 0;
   let updated = 0;
@@ -289,6 +329,7 @@ inventoryRouter.post('/upload', upload.single('file'), async (req, res) => {
           [f.id, r.drugId, r.quantity, r.price, r.batchNo, r.expiryDate, r.reorderLevel],
           c,
         );
+        await syncNafdac(c, f.id, r.drugId, r.nafdacNo!);
         if (existing) updated++;
         else created++;
       }

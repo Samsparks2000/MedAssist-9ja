@@ -25,6 +25,7 @@ interface Item {
   days_to_expiry: number;
   needs_prescription: boolean;
   refrigerated: boolean;
+  nafdac_no: string | null;
 }
 
 interface Drug {
@@ -54,7 +55,7 @@ export function InventoryTable({ preview = false }: { preview?: boolean }) {
   const [params, setParams] = useSearchParams();
   const filter = params.get('filter') ?? 'all';
   const [text, setText] = useState('');
-  const [edit, setEdit] = useState<Record<string, { quantity: number; price: number; reorderLevel: number }>>({});
+  const [edit, setEdit] = useState<Record<string, { quantity: number; price: number; reorderLevel: number; nafdacNo: string }>>({});
   const [limit, setLimit] = useState(preview ? 6 : 30);
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(() => api<Item[]>('/inventory').then(setItems), []);
@@ -78,12 +79,12 @@ export function InventoryTable({ preview = false }: { preview?: boolean }) {
     .filter((i) => filter !== 'low' || lowDrugs.has(i.drug_id))
     .filter((i) => filter !== 'expiring' || i.days_to_expiry <= 90)
     .filter((i) => filter !== 'out' || i.quantity - i.reserved <= 0)
-    .filter((i) => !text || `${i.brand_name} ${i.generic_name} ${i.batch_no}`.toLowerCase().includes(text.toLowerCase()));
+    .filter((i) => !text || `${i.brand_name} ${i.generic_name} ${i.batch_no} ${i.nafdac_no ?? ''}`.toLowerCase().includes(text.toLowerCase()));
 
   const save = async (i: Item) => {
     const e = edit[i.id];
     try {
-      await api(`/inventory/${i.id}`, { method: 'PATCH', body: { quantity: e.quantity, price: e.price, reorderLevel: e.reorderLevel, reason: 'Stock count' } });
+      await api(`/inventory/${i.id}`, { method: 'PATCH', body: { quantity: e.quantity, price: e.price, reorderLevel: e.reorderLevel, nafdacNo: e.nafdacNo.trim() || undefined, reason: 'Stock count' } });
       setEdit(({ [i.id]: _, ...rest }) => rest);
       setError(null);
       reload();
@@ -97,7 +98,7 @@ export function InventoryTable({ preview = false }: { preview?: boolean }) {
       <div className="spread">
         <h2 style={{ margin: 0 }}>Inventory <span className="small muted" style={{ fontFamily: 'var(--font)', fontWeight: 400 }}>· {items.length} items</span></h2>
         <div className="row">
-          <input className="filled" style={{ width: 240 }} placeholder="Search medicine or batch" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search medicine or batch" />
+          <input className="filled" style={{ width: 240 }} placeholder="Search medicine, batch or NAFDAC no." value={text} onChange={(e) => setText(e.target.value)} aria-label="Search medicine, batch or NAFDAC number" />
           <select style={{ width: 'auto' }} value={filter} onChange={(e) => setParams(e.target.value === 'all' ? {} : { filter: e.target.value })} aria-label="Filter">
             <option value="all">All items</option>
             <option value="low">Low stock</option>
@@ -110,7 +111,7 @@ export function InventoryTable({ preview = false }: { preview?: boolean }) {
       <div className="table-wrap">
         <table>
           <thead>
-            <tr><th>Medicine</th><th>Batch</th><th>Expiry</th><th className="num-cell">In stock</th><th className="num-cell">Reorder at</th><th className="num-cell">Price</th><th>Status</th><th /></tr>
+            <tr><th>Medicine</th><th>Batch</th><th>NAFDAC no.</th><th>Expiry</th><th className="num-cell">In stock</th><th className="num-cell">Reorder at</th><th className="num-cell">Price</th><th>Status</th><th /></tr>
           </thead>
           <tbody>
             {shown.slice(0, limit).map((i) => {
@@ -120,6 +121,13 @@ export function InventoryTable({ preview = false }: { preview?: boolean }) {
                 <tr key={i.id}>
                   <td>{label(i)} <span className="muted small">{i.form}</span></td>
                   <td className="mono">{i.batch_no}</td>
+                  <td className="mono">
+                    {e ? (
+                      <input className="mono" style={{ width: 100 }} value={e.nafdacNo} placeholder="A4-1234" onChange={(ev) => setEdit({ ...edit, [i.id]: { ...e, nafdacNo: ev.target.value } })} aria-label="NAFDAC number" />
+                    ) : (
+                      i.nafdac_no ?? <span className="warn-text small">Missing</span>
+                    )}
+                  </td>
                   <td className={i.days_to_expiry <= 30 ? 'danger-text' : ''}>{i.days_to_expiry <= 30 ? date(i.expiry_date) : monthYear(i.expiry_date)}</td>
                   <td className="num-cell">
                     {e ? <input type="number" min={i.reserved} style={{ width: 80 }} value={e.quantity} onChange={(ev) => setEdit({ ...edit, [i.id]: { ...e, quantity: Number(ev.target.value) } })} aria-label="Quantity" /> : <>{i.quantity - i.reserved}{i.reserved > 0 && <span className="muted"> +{i.reserved} held</span>}</>}
@@ -140,7 +148,7 @@ export function InventoryTable({ preview = false }: { preview?: boolean }) {
                     ) : i.quantity - i.reserved <= 0 || i.days_to_expiry <= 0 ? (
                       <Link className="btn link" to={`/dashboard/inventory/add?drug=${i.drug_id}`}>Restock</Link>
                     ) : (
-                      <button className="btn link" onClick={() => setEdit({ ...edit, [i.id]: { quantity: i.quantity, price: i.price, reorderLevel: i.reorder_level } })}>Edit</button>
+                      <button className="btn link" onClick={() => setEdit({ ...edit, [i.id]: { quantity: i.quantity, price: i.price, reorderLevel: i.reorder_level, nafdacNo: i.nafdac_no ?? '' } })}>Edit</button>
                     )}
                   </td>
                 </tr>
@@ -175,15 +183,15 @@ export function Inventory() {
 interface UploadError {
   row: number;
   message: string;
-  kind?: 'unknown_drug' | 'expired' | 'price' | 'other';
+  kind?: 'unknown_drug' | 'expired' | 'price' | 'nafdac' | 'other';
   raw?: string;
   suggestion?: { drugId: string; label: string };
-  fields?: { drugId: string | null; quantity: number | null; price: number | null; batchNo: string; expiryDate: string | null; reorderLevel: number };
+  fields?: { drugId: string | null; quantity: number | null; price: number | null; batchNo: string; expiryDate: string | null; reorderLevel: number; nafdacNo: string | null };
 }
 interface UploadResult {
   valid: number;
   errors: UploadError[];
-  preview: { row: number; drugId: string; drugLabel: string; quantity: number; price: number; batchNo: string; expiryDate: string; reorderLevel: number }[];
+  preview: { row: number; drugId: string; drugLabel: string; quantity: number; price: number; batchNo: string; expiryDate: string; reorderLevel: number; nafdacNo: string | null }[];
 }
 
 /** Add stock (design page 20): one item with a live patient preview, or a spreadsheet with fix-ups. */
@@ -213,8 +221,8 @@ function AddOne({ facility, onDone }: { facility: Facility; onDone: () => void }
   const [q, setQ] = useState('');
   const [matches, setMatches] = useState<Drug[]>([]);
   const [drug, setDrug] = useState<Drug | null>(null);
-  const [demand, setDemand] = useState<{ searches: number; available: number; listed: boolean } | null>(null);
-  const [form, setForm] = useState({ batchNo: '', expiry: '', quantity: '', price: '', cost: '', reorder: '', rx: false, cold: false, reservable: true });
+  const [demand, setDemand] = useState<{ searches: number; available: number; listed: boolean; nafdacNo: string | null } | null>(null);
+  const [form, setForm] = useState({ batchNo: '', expiry: '', quantity: '', price: '', cost: '', reorder: '', nafdac: '', rx: false, cold: false, reservable: true });
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -234,7 +242,9 @@ function AddOne({ facility, onDone }: { facility: Facility; onDone: () => void }
     setMatches([]);
     const rx = ['Insulin', 'Antibiotic', 'Antidiabetic', 'Antihypertensive', 'Obstetric', 'Emergency'].includes(d.category ?? '');
     setForm((f) => ({ ...f, rx, cold: ['Insulin', 'Obstetric'].includes(d.category ?? '') }));
-    api(`/inventory/demand/${d.id}`).then(setDemand).catch(() => setDemand(null));
+    api<{ searches: number; available: number; listed: boolean; nafdacNo: string | null }>(`/inventory/demand/${d.id}`)
+      .then((r) => { setDemand(r); if (r.nafdacNo) setForm((f) => ({ ...f, nafdac: f.nafdac || r.nafdacNo! })); })
+      .catch(() => setDemand(null));
   };
 
   // A month picker gives "2028-04"; stock is listed until the end of that month.
@@ -247,7 +257,7 @@ function AddOne({ facility, onDone }: { facility: Facility; onDone: () => void }
         body: {
           drugId: drug.id, batchNo: form.batchNo, expiryDate, quantity: Number(form.quantity), price: Number(form.price),
           costPrice: form.cost ? Number(form.cost) : null, reorderLevel: Number(form.reorder || 0),
-          needsPrescription: form.rx, refrigerated: form.cold, allowReservations: form.reservable,
+          needsPrescription: form.rx, refrigerated: form.cold, allowReservations: form.reservable, nafdacNo: form.nafdac.trim() || null,
         },
       });
       setError(null);
@@ -256,7 +266,7 @@ function AddOne({ facility, onDone }: { facility: Facility; onDone: () => void }
       setDrug(null);
       setQ('');
       setDemand(null);
-      setForm({ batchNo: '', expiry: '', quantity: '', price: '', cost: '', reorder: '', rx: false, cold: false, reservable: true });
+      setForm({ batchNo: '', expiry: '', quantity: '', price: '', cost: '', reorder: '', nafdac: '', rx: false, cold: false, reservable: true });
     } catch (e) {
       setError(errorText(e));
     }
@@ -289,6 +299,9 @@ function AddOne({ facility, onDone }: { facility: Facility; onDone: () => void }
         <div className="form-grid">
           <Field label="Batch number"><input className="mono" value={form.batchNo} onChange={(e) => setForm({ ...form, batchNo: e.target.value })} required /></Field>
           <Field label="Expiry date"><input type="month" value={form.expiry} onChange={(e) => setForm({ ...form, expiry: e.target.value })} required /></Field>
+          <Field label="NAFDAC reg. no." hint={demand?.nafdacNo ? 'Filled in from your earlier batches' : 'As printed on the pack, e.g. A4-1234'}>
+            <input className="mono" value={form.nafdac} onChange={(e) => setForm({ ...form, nafdac: e.target.value })} placeholder="A4-1234" required />
+          </Field>
           <Field label="Packs received"><input className="mono" type="number" min={1} value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} required /></Field>
           <Field label="Selling price per pack (₦)"><input className="mono" type="number" min={0} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required /></Field>
           <Field label={<>Cost price (₦) <span className="opt">· private</span></>}><input className="mono" type="number" min={0} value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} /></Field>
@@ -315,7 +328,7 @@ function AddOne({ facility, onDone }: { facility: Facility; onDone: () => void }
             <strong>{drug ? `${label(drug)} · ${drug.form}` : 'Choose a medicine'}</strong>
             <span><span className="mono">{form.price ? naira(Number(form.price)) : '₦—'}</span> <span className="ok-text small">In stock</span></span>
           </div>
-          <span className="small muted">{form.rx ? 'Needs a prescription · ' : ''}updated just now</span>
+          <span className="small muted">{form.nafdac ? `NAFDAC ${form.nafdac.trim().toUpperCase()} · ` : ''}{form.expiry ? `expires ${monthYear(expiryDate)} · ` : ''}{form.rx ? 'Needs a prescription · ' : ''}updated just now</span>
         </div>
         {drug && demand && (
           <div className="card tint" style={{ borderColor: 'transparent' }}>
@@ -355,8 +368,8 @@ function SpreadsheetUpload() {
   };
 
   const ready = [
-    ...(result?.preview ?? []).map((r) => ({ drugId: r.drugId, quantity: r.quantity, price: r.price, batchNo: r.batchNo, expiryDate: r.expiryDate, reorderLevel: r.reorderLevel })),
-    ...Object.values(fixed).map((f) => ({ drugId: f.drugId!, quantity: f.quantity!, price: f.price!, batchNo: f.batchNo, expiryDate: f.expiryDate!, reorderLevel: f.reorderLevel })),
+    ...(result?.preview ?? []).map((r) => ({ drugId: r.drugId, quantity: r.quantity, price: r.price, batchNo: r.batchNo, expiryDate: r.expiryDate, reorderLevel: r.reorderLevel, nafdacNo: r.nafdacNo })),
+    ...Object.values(fixed).map((f) => ({ drugId: f.drugId!, quantity: f.quantity!, price: f.price!, batchNo: f.batchNo, expiryDate: f.expiryDate!, reorderLevel: f.reorderLevel, nafdacNo: f.nafdacNo })),
   ];
   const remaining = (result?.errors ?? []).filter((e) => !fixed[e.row]);
 
@@ -371,6 +384,11 @@ function SpreadsheetUpload() {
     if (e.kind === 'price') {
       const v = Number(prompt('Selling price (₦)'));
       if (v > 0) setFixed({ ...fixed, [e.row]: { ...base, price: v } });
+    }
+    if (e.kind === 'nafdac') {
+      const v = prompt('NAFDAC registration number, as printed on the pack (e.g. A4-1234)')?.replace(/\s+/g, '').toUpperCase();
+      if (v && /^[A-Z]{0,3}\d{1,3}-\d{3,7}[A-Z]{0,3}$/.test(v)) setFixed({ ...fixed, [e.row]: { ...base, nafdacNo: v } });
+      else if (v) alert('That does not look like a NAFDAC number. It should look like A4-1234 or 04-5678.');
     }
   };
 
@@ -394,7 +412,7 @@ function SpreadsheetUpload() {
       <div className="spread">
         <div>
           <h2 style={{ margin: 0 }}>Or upload a spreadsheet</h2>
-          <p className="muted" style={{ margin: 0 }}>Best for your first setup or a big delivery. Columns: medicine, strength, batch, expiry, quantity, price.</p>
+          <p className="muted" style={{ margin: 0 }}>Best for your first setup or a big delivery. Columns: medicine, strength, batch, expiry, quantity, price, NAFDAC no.</p>
         </div>
         <button className="btn" onClick={() => downloadFile('/inventory/template.csv', 'medassist-stock-template.csv')}>Get the template</button>
       </div>
@@ -427,6 +445,7 @@ function SpreadsheetUpload() {
                         {!fixed[e.row] && e.kind === 'unknown_drug' && e.suggestion && <button className="btn small outline" onClick={() => fix(e)}>Yes, use it</button>}
                         {!fixed[e.row] && e.kind === 'expired' && <button className="btn small" onClick={() => fix(e)}>Edit date</button>}
                         {!fixed[e.row] && e.kind === 'price' && <button className="btn small" onClick={() => fix(e)}>Add price</button>}
+                        {!fixed[e.row] && e.kind === 'nafdac' && e.fields?.drugId && <button className="btn small" onClick={() => fix(e)}>Add NAFDAC no.</button>}
                       </td>
                     </tr>
                   ))}

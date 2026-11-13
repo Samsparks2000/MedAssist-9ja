@@ -8,7 +8,7 @@ import { one, query } from '../../db/pool.js';
 import { requireAuth, signToken, type Role } from '../../lib/auth.js';
 import { normalisePhone, numericCode, sha256 } from '../../lib/codes.js';
 import { badRequest, conflict, notFound, parse, unauthorized } from '../../lib/errors.js';
-import { findOwnFacility } from '../facilities/service.js';
+import { facilityAccess, findOwnFacility } from '../facilities/service.js';
 import { consumeOtp } from './otp.js';
 
 export const authRouter = Router();
@@ -193,7 +193,7 @@ authRouter.get('/me', requireAuth(), async (req, res) => {
   const user = await one(`SELECT ${userFields} FROM users WHERE id = $1`, [req.user!.id]);
   const f = await findOwnFacility(req.user!.id);
   const facility = f
-    ? { id: f.id, name: f.name, type: f.type, verification_status: f.verification_status, verification_note: f.verification_note, area: f.area, isOwner: f.owner_id === req.user!.id }
+    ? { id: f.id, name: f.name, type: f.type, verification_status: f.verification_status, verification_note: f.verification_note, area: f.area, isOwner: f.owner_id === req.user!.id, access: await facilityAccess(req.user!.id, f) }
     : null;
   const specialist = await one(
     'SELECT id, specialty, verification_status, verification_note FROM specialists WHERE user_id = $1',

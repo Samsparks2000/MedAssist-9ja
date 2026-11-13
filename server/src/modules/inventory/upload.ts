@@ -1,12 +1,13 @@
 import { parse as parseCsv } from 'csv-parse/sync';
 import ExcelJS from 'exceljs';
 import { drugLabel, matchCatalogue, searchDrugs } from '../catalogue/service.js';
+import { cleanNafdac, isValidNafdac, NAFDAC_HINT } from './service.js';
 
-export const TEMPLATE_COLUMNS = ['name', 'strength', 'form', 'quantity', 'price', 'batch_no', 'expiry_date', 'reorder_level'] as const;
+export const TEMPLATE_COLUMNS = ['name', 'strength', 'form', 'quantity', 'price', 'batch_no', 'expiry_date', 'reorder_level', 'nafdac_no'] as const;
 
 export const TEMPLATE_CSV =
   TEMPLATE_COLUMNS.join(',') +
-  '\nPanadol,500mg,Tablet,240,50,PN2401,2027-06-30,40\nCoartem,80/480mg,Tablet,60,3500,CT118,2027-01-31,10\n';
+  '\nPanadol,500mg,Tablet,240,50,PN2401,2027-06-30,40,A4-1234\nCoartem,80/480mg,Tablet,60,3500,CT118,2027-01-31,10,04-5678\n';
 
 export interface ParsedRow {
   row: number;
@@ -17,16 +18,18 @@ export interface ParsedRow {
   batchNo: string;
   expiryDate: string;
   reorderLevel: number;
+  /** Null when the sheet left it empty; the route fills it from the facility's records or reports it. */
+  nafdacNo: string | null;
 }
 
 export interface RowError {
   row: number;
   message: string;
   /** Lets the dashboard offer a one-click fix: "Yes, use it", "Edit date", "Add price". */
-  kind?: 'unknown_drug' | 'expired' | 'price' | 'other';
+  kind?: 'unknown_drug' | 'expired' | 'price' | 'nafdac' | 'other';
   raw?: string;
   suggestion?: { drugId: string; label: string };
-  fields?: { drugId: string | null; quantity: number | null; price: number | null; batchNo: string; expiryDate: string | null; reorderLevel: number };
+  fields?: { drugId: string | null; quantity: number | null; price: number | null; batchNo: string; expiryDate: string | null; reorderLevel: number; nafdacNo: string | null };
 }
 
 /** "2027-08-31", "31/08/2027", "08/2027" or "Aug 2027" → ISO date (end of month when no day). */
@@ -109,6 +112,7 @@ export async function parseStockSheet(buffer: Buffer, filename: string): Promise
     const expiry = normaliseExpiry(get('expiry_date', 'expiry'));
     const reorderText = get('reorder_level', 'alert_below');
     const reorderLevel = reorderText === '' ? 0 : Number(reorderText);
+    const nafdacNo = cleanNafdac(get('nafdac_no', 'nafdac', 'nafdac_number', 'nafdac_reg_no'));
     let kind: RowError['kind'] = 'other';
 
     if (!name) problems.push('name is required');
@@ -124,6 +128,11 @@ export async function parseStockSheet(buffer: Buffer, filename: string): Promise
       kind = 'expired';
     }
     if (!Number.isInteger(reorderLevel) || reorderLevel < 0) problems.push('reorder_level must be a whole number ≥ 0');
+    const nafdacOk = nafdacNo === null || isValidNafdac(nafdacNo);
+    if (!nafdacOk) {
+      problems.push(NAFDAC_HINT);
+      kind = 'nafdac';
+    }
 
     let drug = null;
     let suggestion: RowError['suggestion'];
@@ -155,6 +164,7 @@ export async function parseStockSheet(buffer: Buffer, filename: string): Promise
           batchNo,
           expiryDate: expiry,
           reorderLevel: Number.isInteger(reorderLevel) ? reorderLevel : 0,
+          nafdacNo: nafdacOk ? nafdacNo : null,
         },
       });
       continue;
@@ -168,6 +178,7 @@ export async function parseStockSheet(buffer: Buffer, filename: string): Promise
       batchNo,
       expiryDate: expiry!,
       reorderLevel,
+      nafdacNo,
     });
   }
   return { rows, errors };

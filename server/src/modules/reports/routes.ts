@@ -4,7 +4,7 @@ import { one, query } from '../../db/pool.js';
 import { requireAuth } from '../../lib/auth.js';
 import { parse } from '../../lib/errors.js';
 import { haversineSql } from '../../lib/geo.js';
-import { ownFacility } from '../facilities/service.js';
+import { managedFacility, ownFacility } from '../facilities/service.js';
 
 /** US-21 facility reports: overview counts, missed searches nearby, sales and top items. */
 export const reportsRouter = Router();
@@ -63,7 +63,7 @@ reportsRouter.get('/missed-searches', async (req, res) => {
 });
 
 reportsRouter.get('/sales', async (req, res) => {
-  const f = await ownFacility(req.user!);
+  const f = await managedFacility(req.user!);
   const p = parse(
     z.object({ days: z.coerce.number().int().min(1).max(366).default(30), format: z.enum(['json', 'csv']).default('json') }),
     req.query,
@@ -78,7 +78,7 @@ reportsRouter.get('/sales', async (req, res) => {
      SELECT to_char(o.collected_at AT TIME ZONE 'Africa/Lagos', 'YYYY-MM-DD'), CASE o.payment_mode WHEN 'online' THEN 'Reservation (paid online)' ELSE 'Reservation (paid at pickup)' END,
             oi.description, oi.quantity, oi.quantity * oi.unit_price
        FROM orders o JOIN order_items oi ON oi.order_id = o.id
-      WHERE o.facility_id = $1 AND o.status = 'collected' AND o.collected_at > now() - make_interval(days => $2)
+      WHERE o.facility_id = $1::uuid AND o.status = 'collected' AND o.collected_at > now() - make_interval(days => $2)
       ORDER BY 1 DESC`,
     [f.id, p.days],
   );

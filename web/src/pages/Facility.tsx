@@ -23,6 +23,7 @@ interface Drug {
   reorder_level: number;
   batch_no: string | null;
   expiry_date: string | null;
+  nafdac_no: string | null;
   needs_prescription: boolean;
   refrigerated: boolean;
   allow_reservations: boolean;
@@ -191,6 +192,7 @@ export function Facility() {
                     <h2 style={{ margin: 0 }}>{drugName(searched)}</h2>
                     <div className="small">
                       {searched.available} in stock{searched.expiry_date ? ` · expires ${monthYear(searched.expiry_date)}` : ''}
+                      {` · NAFDAC ${searched.nafdac_no ?? 'no. not listed'}`}
                       {searched.refrigerated ? ' · keep refrigerated' : ''}{searched.needs_prescription ? ' · needs a prescription' : ''}
                     </div>
                   </div>
@@ -247,7 +249,9 @@ export function Facility() {
                           <tr key={d.drug_id} style={out ? { color: 'var(--muted)' } : {}}>
                             <td>
                               <strong style={out ? { color: 'var(--muted)' } : {}}>{d.generic_name === d.brand_name ? d.brand_name : `${d.generic_name} (${d.brand_name.replace(/ (SoloStar|KwikPen|FlexPen)$/, '')})`}</strong>
-                              <div className="tiny muted">{d.needs_prescription ? 'Prescription' : ''}{d.needs_prescription && d.refrigerated ? ' · ' : ''}{d.refrigerated ? 'Refrigerated' : ''}</div>
+                              <div className="tiny muted">
+                                {[d.nafdac_no ? `NAFDAC ${d.nafdac_no}` : 'NAFDAC no. not listed', !out && d.expiry_date ? `exp. ${monthYear(d.expiry_date)}` : '', d.needs_prescription ? 'Prescription' : '', d.refrigerated ? 'Refrigerated' : ''].filter(Boolean).join(' · ')}
+                              </div>
                             </td>
                             <td className="hide-mobile muted">{[d.strength, d.form].filter(Boolean).join(' · ')}</td>
                             <td className="num-cell">{naira(d.price ?? d.last_price)}</td>
@@ -301,7 +305,7 @@ export function Facility() {
                 )}
                 {equipment.length > 0 && (
                   <div className="small">
-                    <strong>Equipment:</strong> {equipment.map((e) => `${e.sub_type} ${e.status === 'maintenance' ? '(maintenance)' : `${e.available} free`}`).join(' · ')}
+                    <strong>Equipment:</strong> {equipment.map((e) => `${e.sub_type} ${e.status === 'maintenance' ? '(under repair)' : `${e.available} working and free`}`).join(' · ')}
                   </div>
                 )}
                 {beds.some((b) => b.available > 0) && <Link className="btn primary" to="/bed-request" style={{ alignSelf: 'start' }}>Request a bed</Link>}

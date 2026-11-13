@@ -41,7 +41,7 @@ function stockLabel(kind: TargetKind, spec: string, it: ResultItem) {
   if (spec.startsWith('resource:bed')) return `${it.available} ${it.available === 1 ? 'bed' : 'beds'} free`;
   if (spec.startsWith('resource:blood')) return `${it.available} units`;
   if (spec.startsWith('resource:oxygen')) return `${it.available} ${it.available === 1 ? 'cylinder' : 'cylinders'}`;
-  if (spec.startsWith('resource:equipment')) return `${it.available} available`;
+  if (spec.startsWith('resource:equipment')) return `${it.available} working and free`;
   return it.available <= 3 ? `Only ${it.available} left` : `${it.available} in stock`;
 }
 

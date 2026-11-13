@@ -52,15 +52,17 @@ npm.cmd test
 
 **Patients:** landing page with search and “Browse by need”, guest Emergency screen (call 112 first, “What is happening?”, hospitals tagged with the right doctor/beds/services), results list and map (5/10/20 km search areas, sort, filters, “Search up to 10 km”), pharmacy pages with stock, hours and trust details, reserve with **Pay now** (card/transfer/USSD) or **Pay at pickup**, pickup code `MA-0000`, order timeline, receipts, refunds, refill reminders, “Tell me when back”, bed requests, complaints.
 
-**Pharmacies:** overview with reservations to confirm, alerts and “Searches you missed”; inventory; add stock with live patient preview; spreadsheet upload with “Did you mean…?” fixes; record a sale; reports with CSV export; payouts; staff accounts; profile.
+**Pharmacies:** overview with reservations to confirm, alerts and “Searches you missed”; inventory with batch, expiry and NAFDAC registration number on every listing (required when adding stock, reused for later batches of the same drug); add stock with live patient preview; spreadsheet upload (`nafdac_no` column) with “Did you mean…?” fixes; record a sale; reports with CSV export; payouts; staff accounts; profile.
 
-**Hospitals:** beds by ward with −/+ counters, services status, blood bank grid, specialists today; bed requests; specialists and rota (confirm doctors who list you); supplies; reports; payouts; staff accounts; profile.
+**Hospitals:** beds by ward with −/+ counters, services status, equipment marked Working or Under repair (machines under repair are hidden from search), blood bank grid, specialists today; bed requests; specialists and rota (confirm doctors who list you); supplies; reports; payouts; staff accounts; profile.
 
 **Specialists:** registration with MDCN details and hospital links, weekly schedule with on-call days, “available now” toggle.
 
 **Admin:** verification queue with documents, checklist and “Ask for more information”; outdated listings; complaints by category; payments and refunds; all facilities; drug catalogue and requests; reports and audit log.
 
 **Registration:** pharmacy, hospital and specialist forms with phone verification, document upload, map pin, opening hours, payout bank lookup, and “Save and finish later”.
+
+**Staff access:** the owner adds people as **Staff** (stock, sales, beds, reservations) or **Manager** (also profile, payouts, sales reports and staff accounts). Only the owner can make or remove a manager.
 
 ## Third-party services
 

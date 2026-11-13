@@ -92,7 +92,7 @@ export function Dashboard() {
   if (facility === null || facility.verification_status === 'draft') return <Navigate to="/register" replace />;
 
   const isHospital = facility.type === 'hospital';
-  const nav: NavItem[] = isHospital
+  const allNav: NavItem[] = isHospital
     ? [
         { to: '/dashboard', label: 'Beds and services', end: true },
         { to: '/dashboard/bed-requests', label: 'Bed requests', count: overview?.bed_requests },
@@ -114,6 +114,10 @@ export function Dashboard() {
         { to: '/dashboard/staff', label: 'Staff accounts' },
         { to: '/dashboard/payouts', label: 'Payouts' },
       ];
+  // NFR-04: profile, payouts and sales reports are for the owner and managers only.
+  const MANAGER_ONLY = ['/dashboard/profile', '/dashboard/payouts', '/dashboard/reports'];
+  const isStaff = me?.facility?.access === 'staff';
+  const nav = isStaff ? allNav.filter((n) => !MANAGER_ONLY.includes(n.to)) : allNav;
   const verified = facility.verification_status === 'approved';
 
   return (

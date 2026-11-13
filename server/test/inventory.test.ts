@@ -12,12 +12,12 @@ describe('inventory (US-16 – US-19)', () => {
   it('imports a CSV with per-row errors and matches the catalogue fuzzily', async () => {
     const token = await providerToken('surulere-family');
     const csv = [
-      'name,strength,form,quantity,price,batch_no,expiry_date,reorder_level',
-      `Panadol,500mg,Tablet,100,55,SF-1,${future(300)},20`,
-      `augmentn,625mg,Tablet,12,6400,SF-2,${future(200)},3`,
-      `Unknownium,5mg,Tablet,10,100,SF-3,${future(200)},1`,
-      `Flagyl,400mg,Tablet,10,900,SF-4,2020-01-01,1`,
-      `Brufen,400mg,Tablet,ten,900,SF-5,${future(200)},1`,
+      'name,strength,form,quantity,price,batch_no,expiry_date,reorder_level,nafdac_no',
+      `Panadol,500mg,Tablet,100,55,SF-1,${future(300)},20,A4-1001`,
+      `augmentn,625mg,Tablet,12,6400,SF-2,${future(200)},3,04-2002`,
+      `Unknownium,5mg,Tablet,10,100,SF-3,${future(200)},1,A4-1003`,
+      `Flagyl,400mg,Tablet,10,900,SF-4,2020-01-01,1,A4-1004`,
+      `Brufen,400mg,Tablet,ten,900,SF-5,${future(200)},1,A4-1005`,
     ].join('\n');
 
     const dry = await http().post('/api/inventory/upload?dryRun=true').set(auth(token)).attach('file', Buffer.from(csv), 'stock.csv');
@@ -107,5 +107,55 @@ describe('inventory (US-16 – US-19)', () => {
     const other = await one('SELECT id FROM inventory_items WHERE facility_id = $1 LIMIT 1', [await facilityId('tunde')]);
     const res = await http().patch(`/api/inventory/${other.id}`).set(auth(token)).send({ quantity: 0 });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('NAFDAC numbers on drug listings (FR-07)', () => {
+  it('requires a NAFDAC number, reuses it for later batches and shows it to patients', async () => {
+    const token = await providerToken('surulere-family');
+    const facility = await facilityId('surulere-family');
+    const drug = await drugId('Flagyl', '400mg');
+    const base = { drugId: drug, quantity: 5, price: 900, expiryDate: future(400) };
+
+    const missing = await http().post('/api/inventory').set(auth(token)).send({ ...base, batchNo: 'NF-1' });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error ?? missing.body.message).toMatch(/NAFDAC/);
+
+    const badShape = await http().post('/api/inventory').set(auth(token)).send({ ...base, batchNo: 'NF-1', nafdacNo: 'hello' });
+    expect(badShape.status).toBe(400);
+
+    const ok = await http().post('/api/inventory').set(auth(token)).send({ ...base, batchNo: 'NF-1', nafdacNo: 'nafdac reg. no: a4 2345' });
+    expect(ok.status).toBe(201);
+    expect(ok.body.nafdac_no).toBe('A4-2345');
+
+    // A second batch of the same drug reuses the number on file.
+    const second = await http().post('/api/inventory').set(auth(token)).send({ ...base, batchNo: 'NF-2' });
+    expect(second.status).toBe(201);
+    expect(second.body.nafdac_no).toBe('A4-2345');
+
+    // Correcting it on one batch corrects every batch of the drug.
+    await http().patch(`/api/inventory/${second.body.id}`).set(auth(token)).send({ nafdacNo: 'A4-2346' });
+    const rows = await query('SELECT DISTINCT nafdac_no FROM inventory_items WHERE facility_id = $1 AND drug_id = $2', [facility, drug]);
+    expect(rows.map((r) => r.nafdac_no)).toEqual(['A4-2346']);
+
+    const page = await http().get(`/api/facilities/${facility}`);
+    expect(page.body.drugs.find((d: any) => d.drug_id === drug).nafdac_no).toBe('A4-2346');
+  });
+
+  it('flags spreadsheet rows with no NAFDAC number unless one is on file', async () => {
+    const token = await providerToken('surulere-family');
+    const csv = [
+      'name,strength,form,quantity,price,batch_no,expiry_date,reorder_level,nafdac_no',
+      `Panadol,500mg,Tablet,10,55,NU-1,${future(300)},2,A4-1001`,
+      `Lasix,40mg,Tablet,10,500,NU-2,${future(300)},2,`,
+      `Lasix,40mg,Tablet,10,500,NU-3,${future(300)},2,bad`,
+    ].join('\n');
+    const dry = await http().post('/api/inventory/upload?dryRun=true').set(auth(token)).attach('file', Buffer.from(csv), 'stock.csv');
+    expect(dry.status).toBe(200);
+    expect(dry.body.valid).toBe(1);
+    const byRow = Object.fromEntries(dry.body.errors.map((e: any) => [e.row, e]));
+    expect(byRow[3].kind).toBe('nafdac');
+    expect(byRow[3].message).toMatch(/missing/);
+    expect(byRow[4].message).toMatch(/NAFDAC number should look like/);
   });
 });

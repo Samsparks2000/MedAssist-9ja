@@ -117,46 +117,79 @@ export function Payouts() {
 /** Staff accounts: each person signs in with a code sent to their own phone. */
 export function Staff() {
   const { me } = useAuth();
-  const [data, setData] = useState<{ owner: any; staff: any[]; canManage: boolean } | null>(null);
-  const [form, setForm] = useState({ name: '', role: me?.user.role === 'hospital' ? 'Records officer' : 'Pharmacist', phone: '' });
+  const [data, setData] = useState<{
+    owner: any;
+    staff: { id: string; name: string; phone: string; role: string; access: 'manager' | 'staff' }[];
+    myAccess: 'owner' | 'manager' | 'staff';
+    canManage: boolean;
+    canSetManagers: boolean;
+  } | null>(null);
+  const [form, setForm] = useState({ name: '', role: me?.user.role === 'hospital' ? 'Records officer' : 'Pharmacist', phone: '', access: 'staff' as 'manager' | 'staff' });
   const [error, setError] = useState<string | null>(null);
-  const load = () => api('/staff').then(setData);
+  const load = () => api<NonNullable<typeof data>>('/staff').then(setData);
   useEffect(() => {
     load();
   }, []);
   if (!data) return <Spinner />;
+  const act = (p: Promise<unknown>) => p.then(() => { setError(null); load(); }).catch((err) => setError(errorText(err)));
+  const canChange = (m: { access: string }) => data.canManage && (m.access === 'staff' || data.canSetManagers);
   return (
     <div>
       <div className="page-head"><div><h1>Staff accounts</h1><div className="muted">People who can update this listing. Each signs in with a code sent to their phone — no shared passwords.</div></div></div>
+      <div className="card tint small" style={{ marginBottom: '1rem' }}>
+        <strong>Who can do what.</strong> <strong>Staff</strong> update stock, sales, beds and reservations.{' '}
+        <strong>Managers</strong> can also edit the {me?.user.role === 'hospital' ? 'hospital' : 'pharmacy'} profile, see payouts and sales reports, and add or remove staff.
+        Only the owner can make someone a manager.
+      </div>
+      <ErrorBox error={error} />
       <div className="card" style={{ marginBottom: '1rem' }}>
         <table>
-          <thead><tr><th>Name</th><th>Role</th><th>Phone</th><th /></tr></thead>
+          <thead><tr><th>Name</th><th>Job</th><th>Access</th><th>Phone</th><th /></tr></thead>
           <tbody>
-            <tr><td><strong>{data.owner?.name}</strong></td><td>Owner</td><td><Phone value={data.owner?.phone} /></td><td /></tr>
+            <tr><td><strong>{data.owner?.name}</strong></td><td>Owner</td><td><span className="badge ok">Owner</span></td><td><Phone value={data.owner?.phone} /></td><td /></tr>
             {data.staff.map((m) => (
               <tr key={m.id}>
-                <td>{m.name}</td><td>{m.role}</td><td><Phone value={m.phone} /></td>
-                <td style={{ textAlign: 'right' }}>{data.canManage && <button className="btn link" onClick={() => api(`/staff/${m.id}`, { method: 'DELETE' }).then(load)}>Remove</button>}</td>
+                <td>{m.name}</td>
+                <td>{m.role}</td>
+                <td>
+                  {data.canSetManagers ? (
+                    <select style={{ width: 'auto' }} value={m.access} onChange={(e) => act(api(`/staff/${m.id}`, { method: 'PATCH', body: { access: e.target.value } }))} aria-label={`${m.name} access`}>
+                      <option value="staff">Staff</option>
+                      <option value="manager">Manager</option>
+                    </select>
+                  ) : (
+                    <span className={`badge ${m.access === 'manager' ? 'info' : 'grey'}`}>{m.access === 'manager' ? 'Manager' : 'Staff'}</span>
+                  )}
+                </td>
+                <td><Phone value={m.phone} /></td>
+                <td style={{ textAlign: 'right' }}>{canChange(m) && <button className="btn link" onClick={() => act(api(`/staff/${m.id}`, { method: 'DELETE' }))}>Remove</button>}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {data.canManage && (
-        <form className="card" onSubmit={async (e) => { e.preventDefault(); try { await api('/staff', { body: form }); setForm({ ...form, name: '', phone: '' }); setError(null); load(); } catch (err) { setError(errorText(err)); } }}>
+      {data.canManage ? (
+        <form className="card" onSubmit={(e) => { e.preventDefault(); act(api('/staff', { body: form }).then(() => setForm({ ...form, name: '', phone: '', access: 'staff' }))); }}>
           <h2>Add a person</h2>
           <div className="form-grid">
             <Field label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></Field>
-            <Field label="Role">
+            <Field label="Job">
               <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
                 {['Records officer', 'Nurse in charge', 'Pharmacist', 'Pharmacy technician', 'Manager', 'Administrator'].map((r) => <option key={r}>{r}</option>)}
               </select>
             </Field>
             <Field label="Phone"><input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required /></Field>
+            <Field label="Access">
+              <select value={form.access} onChange={(e) => setForm({ ...form, access: e.target.value as 'manager' | 'staff' })} disabled={!data.canSetManagers}>
+                <option value="staff">Staff</option>
+                {data.canSetManagers && <option value="manager">Manager</option>}
+              </select>
+            </Field>
           </div>
-          <ErrorBox error={error} />
           <button className="btn primary">Add person</button>
         </form>
+      ) : (
+        <p className="muted small">Ask the owner or a manager to add or remove people.</p>
       )}
     </div>
   );

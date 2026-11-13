@@ -4,7 +4,7 @@ import { gateway, MockGateway } from '../../adapters/payments.js';
 import { query } from '../../db/pool.js';
 import { requireAuth } from '../../lib/auth.js';
 import { notFound, parse } from '../../lib/errors.js';
-import { ownFacility } from '../facilities/service.js';
+import { managedFacility } from '../facilities/service.js';
 import { handleWebhook, verifyReference } from './service.js';
 
 export const paymentsRouter = Router();
@@ -45,7 +45,7 @@ paymentsRouter.post('/mock/:reference/complete', async (req, res) => {
 
 /** US-25: settlement statement for the signed-in facility. */
 paymentsRouter.get('/settlements', requireAuth('pharmacy', 'hospital'), async (req, res) => {
-  const f = await ownFacility(req.user!);
+  const f = await managedFacility(req.user!);
   const rows = await query(
     `SELECT p.reference, p.paid_at, p.amount, p.platform_fee, p.facility_amount, p.method, p.status, p.refunded_at, o.type, o.id AS order_id
        FROM payments p JOIN orders o ON o.id = p.order_id

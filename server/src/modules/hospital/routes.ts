@@ -6,7 +6,7 @@ import { requireAuth } from '../../lib/auth.js';
 import { normalisePhone } from '../../lib/codes.js';
 import { badRequest, conflict, forbidden, notFound, parse } from '../../lib/errors.js';
 import { localNow } from '../../lib/time.js';
-import { ownFacility, publishChange, touchFacility } from '../facilities/service.js';
+import { facilityAccess, managedFacility, ownFacility, publishChange, touchFacility } from '../facilities/service.js';
 import { notify } from '../notifications/service.js';
 import { HOSPITAL_SERVICES } from '../search/vocabulary.js';
 
@@ -119,24 +119,34 @@ hospitalRouter.post('/specialists/:id/:decision', async (req, res) => {
   res.json({ ok: true });
 });
 
-/** Staff accounts: people who may update the listing; each signs in with a code to their phone. */
+/**
+ * Staff accounts (NFR-04): people who may update the listing; each signs in with a code to their phone.
+ * The owner and managers add and remove staff; only the owner makes someone a manager or removes one.
+ */
 export const staffRouter = Router();
 staffRouter.use(requireAuth('pharmacy', 'hospital'));
 
+const accessInput = z.enum(['manager', 'staff']);
+
 staffRouter.get('/', async (req, res) => {
   const f = await ownFacility(req.user!);
+  const myAccess = await facilityAccess(req.user!.id, f);
   const owner = await one('SELECT id, name, phone FROM users WHERE id = $1', [f.owner_id]);
   const staff = await query(
-    `SELECT u.id, u.name, u.phone, s.role, s.added_at FROM facility_staff s JOIN users u ON u.id = s.user_id WHERE s.facility_id = $1 ORDER BY s.added_at`,
+    `SELECT u.id, u.name, u.phone, s.role, s.access, s.added_at FROM facility_staff s JOIN users u ON u.id = s.user_id
+      WHERE s.facility_id = $1 ORDER BY (s.access = 'manager') DESC, s.added_at`,
     [f.id],
   );
-  res.json({ owner, staff, canManage: f.owner_id === req.user!.id });
+  res.json({ owner, staff, myAccess, canManage: myAccess !== 'staff', canSetManagers: myAccess === 'owner' });
 });
 
 staffRouter.post('/', async (req, res) => {
-  const f = await ownFacility(req.user!);
-  if (f.owner_id !== req.user!.id) throw forbidden('Only the account owner can add staff');
-  const b = parse(z.object({ name: z.string().trim().min(2).max(80), role: z.string().trim().min(2).max(40), phone: z.string() }), req.body);
+  const f = await managedFacility(req.user!);
+  const b = parse(
+    z.object({ name: z.string().trim().min(2).max(80), role: z.string().trim().min(2).max(40), phone: z.string(), access: accessInput.default('staff') }),
+    req.body,
+  );
+  if (b.access === 'manager' && f.access !== 'owner') throw forbidden('Only the owner can add a manager');
   const phone = normalisePhone(b.phone);
   if (!phone) throw badRequest('Enter a valid Nigerian phone number');
   const role = req.user!.role;
@@ -145,17 +155,37 @@ staffRouter.post('/', async (req, res) => {
     (await one(`INSERT INTO users (name, phone, role, consent_at) VALUES ($1, $2, $3, now()) RETURNING id, role`, [b.name, phone, role]));
   if (user.role !== role) throw conflict(`That number already belongs to a ${user.role} account`);
   if (user.id === f.owner_id) throw conflict('That is the owner account');
+  const existing = await one('SELECT access FROM facility_staff WHERE facility_id = $1 AND user_id = $2', [f.id, user.id]);
+  if (existing?.access === 'manager' && f.access !== 'owner') throw forbidden('Only the owner can change a manager');
   await query(
-    `INSERT INTO facility_staff (facility_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (facility_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-    [f.id, user.id, b.role],
+    `INSERT INTO facility_staff (facility_id, user_id, role, access) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (facility_id, user_id) DO UPDATE SET role = EXCLUDED.role, access = EXCLUDED.access`,
+    [f.id, user.id, b.role, b.access],
   );
-  await audit(db(), req.user!.id, 'staff.add', 'facility', f.id, { userId: user.id, role: b.role });
+  await audit(db(), req.user!.id, 'staff.add', 'facility', f.id, { userId: user.id, role: b.role, access: b.access });
   res.status(201).json({ id: user.id });
 });
 
+/** The owner switches a person between manager and staff. */
+staffRouter.patch('/:userId', async (req, res) => {
+  const f = await managedFacility(req.user!);
+  if (f.access !== 'owner') throw forbidden('Only the owner can change who is a manager');
+  const { access } = parse(z.object({ access: accessInput }), req.body);
+  const row = await one(
+    'UPDATE facility_staff SET access = $3 WHERE facility_id = $1 AND user_id = $2 RETURNING user_id',
+    [f.id, req.params.userId, access],
+  );
+  if (!row) throw notFound('That person is not on your staff list');
+  await audit(db(), req.user!.id, 'staff.access', 'facility', f.id, { userId: req.params.userId, access });
+  res.json({ ok: true });
+});
+
 staffRouter.delete('/:userId', async (req, res) => {
-  const f = await ownFacility(req.user!);
-  if (f.owner_id !== req.user!.id) throw forbidden('Only the account owner can remove staff');
+  const f = await managedFacility(req.user!);
+  const target = await one('SELECT access FROM facility_staff WHERE facility_id = $1 AND user_id = $2', [f.id, req.params.userId]);
+  if (!target) throw notFound('That person is not on your staff list');
+  if (target.access === 'manager' && f.access !== 'owner') throw forbidden('Only the owner can remove a manager');
   await query('DELETE FROM facility_staff WHERE facility_id = $1 AND user_id = $2', [f.id, req.params.userId]);
+  await audit(db(), req.user!.id, 'staff.remove', 'facility', f.id, { userId: req.params.userId });
   res.status(204).end();
 });

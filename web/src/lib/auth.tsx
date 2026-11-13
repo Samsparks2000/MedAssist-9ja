@@ -5,7 +5,7 @@ export type Role = 'patient' | 'pharmacy' | 'hospital' | 'specialist' | 'admin';
 
 export interface Me {
   user: { id: string; name: string | null; phone: string | null; email: string | null; role: Role };
-  facility: { id: string; name: string; type: 'pharmacy' | 'hospital'; verification_status: string; verification_note: string | null } | null;
+  facility: { id: string; name: string; type: 'pharmacy' | 'hospital'; verification_status: string; verification_note: string | null; access?: 'owner' | 'manager' | 'staff' } | null;
   specialist: { id: string; specialty: string; verification_status: string; verification_note: string | null } | null;
   locations: { id: string; label: string; address: string | null; lat: number; lng: number }[];
 }

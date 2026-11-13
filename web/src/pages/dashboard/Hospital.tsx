@@ -16,6 +16,11 @@ interface Resource {
   price: number | null;
 }
 
+/** Hospital services that are the same thing as an equipment row, so the two statuses stay in step. */
+const SERVICE_FOR_EQUIPMENT: Record<string, string> = {
+  'CT scanner': 'CT scan', 'X-ray': 'X-ray', Ventilator: 'Ventilator', 'Dialysis machine': 'Dialysis',
+};
+
 const GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const BLOOD_ALERT = 2;
 const TODAY_LABEL: Record<string, [string, string]> = {
@@ -129,7 +134,15 @@ export function BedsAndServices({ facility, onSaved }: { facility: Facility; onS
                 <tr key={s.service}>
                   <td>{s.service}</td>
                   <td style={{ width: 190 }}>
-                    <select className={`status-${s.status}`} value={s.status} onChange={(e) => { setServices(services.map((x) => (x.service === s.service ? { ...x, status: e.target.value } : x))); setDirty(true); }} aria-label={`${s.service} status`}>
+                    <select className={`status-${s.status}`} value={s.status} onChange={(e) => {
+                        const status = e.target.value;
+                        setServices(services.map((x) => (x.service === s.service ? { ...x, status } : x)));
+                        const machine = Object.keys(SERVICE_FOR_EQUIPMENT).find((k) => SERVICE_FOR_EQUIPMENT[k] === s.service);
+                        if (machine && rows.some((r) => r.type === 'equipment' && r.subType === machine)) {
+                          update('equipment', machine, status === 'under_repair' ? { status: 'maintenance', available: 0 } : { status: 'available' });
+                        }
+                        setDirty(true);
+                      }} aria-label={`${s.service} status`}>
                       <option value="available">Available</option>
                       <option value="under_repair">Under repair</option>
                       <option value="not_available">Not available</option>
@@ -147,20 +160,47 @@ export function BedsAndServices({ facility, onSaved }: { facility: Facility; onS
           )}
           {equipment.length > 0 && (
             <>
-              <h3 className="mt">Equipment and oxygen counts</h3>
+              <h3 className="mt">Equipment and oxygen</h3>
+              <p className="muted small" style={{ margin: 0 }}>Machines marked under repair are hidden from patient searches until you mark them working again.</p>
               <table>
+                <thead><tr><th>Item</th><th>Working status</th><th>Free now</th></tr></thead>
                 <tbody>
-                  {equipment.map((r) => (
-                    <tr key={r.subType}>
-                      <td>{r.subType}</td>
-                      <td style={{ width: 210 }}>
-                        <div className="row" style={{ flexWrap: 'nowrap' }}>
-                          <input className="mono" type="number" min={0} max={r.capacity} style={{ width: 70, minHeight: 38 }} value={r.available} onChange={(e) => update(r.type, r.subType, { available: Math.min(r.capacity, Math.max(0, Number(e.target.value))) })} aria-label={`${r.subType} free`} />
-                          <span className="small muted">free of {r.capacity}</span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {equipment.map((r) => {
+                    const repair = r.type === 'equipment' && r.status === 'maintenance';
+                    return (
+                      <tr key={r.subType}>
+                        <td>{r.subType}</td>
+                        <td style={{ width: 170 }}>
+                          {r.type === 'equipment' ? (
+                            <select
+                              className={`status-${repair ? 'under_repair' : 'available'}`}
+                              value={repair ? 'maintenance' : 'available'}
+                              onChange={(e) => {
+                                const repairNow = e.target.value === 'maintenance';
+                                update(r.type, r.subType, repairNow ? { status: 'maintenance', available: 0 } : { status: 'available' });
+                                const service = SERVICE_FOR_EQUIPMENT[r.subType];
+                                if (service && services.some((x) => x.service === service)) {
+                                  setServices(services.map((x) => (x.service === service ? { ...x, status: repairNow ? 'under_repair' : 'available' } : x)));
+                                }
+                              }}
+                              aria-label={`${r.subType} working status`}
+                            >
+                              <option value="available">Working</option>
+                              <option value="maintenance">Under repair</option>
+                            </select>
+                          ) : (
+                            <span className="muted small">—</span>
+                          )}
+                        </td>
+                        <td style={{ width: 190 }}>
+                          <div className="row" style={{ flexWrap: 'nowrap' }}>
+                            <input className="mono" type="number" min={0} max={r.capacity} disabled={repair} style={{ width: 70, minHeight: 38 }} value={r.available} onChange={(e) => update(r.type, r.subType, { available: Math.min(r.capacity, Math.max(0, Number(e.target.value))) })} aria-label={`${r.subType} free`} />
+                            <span className="small muted">of {r.capacity}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </>

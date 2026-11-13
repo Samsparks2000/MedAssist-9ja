@@ -174,7 +174,7 @@ describe('back in stock', () => {
     const watch = await http().post('/api/me/watches').set(auth(patient)).send({ facilityId: facility, drugId: epipen });
     expect(watch.status).toBe(201);
     const pharmacist = await providerToken('iwo-road-chemists');
-    await http().post('/api/inventory').set(auth(pharmacist)).send({ drugId: epipen, quantity: 2, price: 66000, batchNo: 'NEW-1', expiryDate: '2028-01-31' });
+    await http().post('/api/inventory').set(auth(pharmacist)).send({ drugId: epipen, quantity: 2, price: 66000, batchNo: 'NEW-1', expiryDate: '2028-01-31', nafdacNo: 'A4-0101' });
     const notes = await http().get('/api/notifications').set(auth(patient));
     expect(notes.body.items.some((n: any) => n.kind === 'back_in_stock')).toBe(true);
   });

@@ -52,6 +52,27 @@ export async function ownFacility(user: AuthUser, client?: Db): Promise<Facility
   return f;
 }
 
+export type FacilityAccess = 'owner' | 'manager' | 'staff';
+
+/** What the signed-in person may do at their facility (NFR-04): owner, manager or staff. */
+export async function facilityAccess(userId: string, f: FacilityRow, client?: Db): Promise<FacilityAccess> {
+  if (f.owner_id === userId) return 'owner';
+  const row = await one<{ access: 'manager' | 'staff' }>(
+    'SELECT access FROM facility_staff WHERE facility_id = $1 AND user_id = $2',
+    [f.id, userId],
+    client,
+  );
+  return row?.access ?? 'staff';
+}
+
+/** The facility, if the signed-in person is its owner or a manager; staff are refused. */
+export async function managedFacility(user: AuthUser, client?: Db): Promise<FacilityRow & { access: FacilityAccess }> {
+  const f = await ownFacility(user, client);
+  const access = await facilityAccess(user.id, f, client);
+  if (access === 'staff') throw forbidden('Only the owner or a manager can do this. Ask them to change it, or to make you a manager.');
+  return { ...f, access };
+}
+
 /** Owner plus staff user ids, for notifications. */
 export async function facilityTeam(facilityId: string, client?: Db): Promise<string[]> {
   const rows = await query<{ id: string }>(

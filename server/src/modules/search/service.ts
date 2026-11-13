@@ -136,6 +136,12 @@ async function candidates(target: Target, origin: LatLng, maxRadiusKm: number) {
          FROM facilities f JOIN resources r ON r.facility_id = f.id
         WHERE r.type = $3 AND ($4::text IS NULL OR r.sub_type = $4) AND r.available > 0
           AND (r.status IS NULL OR r.status = 'available')
+          -- FR-08: also hidden when the matching hospital service is marked under repair or not available.
+          AND NOT EXISTS (
+            SELECT 1 FROM facility_services s
+             WHERE s.facility_id = f.id AND s.status <> 'available'
+               AND s.service = CASE r.sub_type WHEN 'CT scanner' THEN 'CT scan' WHEN 'Dialysis machine' THEN 'Dialysis'
+                                               WHEN 'Oxygen cylinder' THEN 'Oxygen' ELSE r.sub_type END)
           AND ${geoWhere(5)} AND ${fresh}
         GROUP BY f.id`,
       [origin.lat, origin.lng, target.type, target.subType, ...geo],

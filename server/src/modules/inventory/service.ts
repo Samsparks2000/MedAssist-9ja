@@ -3,6 +3,45 @@ import { conflict } from '../../lib/errors.js';
 import { drugLabel } from '../catalogue/service.js';
 import { notify, notifyFacilityOwner } from '../notifications/service.js';
 
+/**
+ * NAFDAC registration numbers (FR-07) look like "A4-1234", "04-5678" or "A7-0456L".
+ * Spaces are dropped and letters upper-cased; an empty value means "not given".
+ */
+const NAFDAC_PATTERN = /^[A-Z]{0,3}\d{1,3}-\d{3,7}[A-Z]{0,3}$/;
+export const NAFDAC_HINT = 'NAFDAC number should look like A4-1234 or 04-5678 (as printed on the pack)';
+
+export function cleanNafdac(v: string | null | undefined): string | null {
+  // "A4 2345" is a common way of writing "A4-2345".
+  const s = (v ?? '').trim().replace(/(\d)\s+(\d)/g, '$1-$2').replace(/\s+/g, '').replace(/^NAFDAC(REG\.?(NO\.?)?)?[:#.]*/i, '').toUpperCase();
+  return s === '' ? null : s;
+}
+
+export function isValidNafdac(v: string): boolean {
+  return NAFDAC_PATTERN.test(v);
+}
+
+/** NAFDAC numbers this facility already recorded, by drug, so a new batch can reuse them. */
+export async function nafdacOnFile(client: Db, facilityId: string, drugIds: string[]): Promise<Map<string, string>> {
+  if (!drugIds.length) return new Map();
+  const rows = await query<{ drug_id: string; nafdac_no: string }>(
+    `SELECT DISTINCT ON (drug_id) drug_id, nafdac_no FROM inventory_items
+      WHERE facility_id = $1 AND drug_id = ANY($2) AND nafdac_no IS NOT NULL
+      ORDER BY drug_id, updated_at DESC`,
+    [facilityId, drugIds],
+    client,
+  );
+  return new Map(rows.map((r) => [r.drug_id, r.nafdac_no]));
+}
+
+/** The number belongs to the product, so every batch of the drug at this facility carries the same one. */
+export async function syncNafdac(client: Db, facilityId: string, drugId: string, nafdacNo: string): Promise<void> {
+  await query(
+    'UPDATE inventory_items SET nafdac_no = $3 WHERE facility_id = $1 AND drug_id = $2 AND nafdac_no IS DISTINCT FROM $3',
+    [facilityId, drugId, nafdacNo],
+    client,
+  );
+}
+
 export interface Allocation {
   itemId: string;
   quantity: number;
